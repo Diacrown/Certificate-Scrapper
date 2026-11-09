@@ -3,93 +3,340 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AGL Report Fetcher</title>
+<title>Certificate Fetcher</title>
 <style>
-  :root{--bg:#f6f6f4;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#dcdcd6;--accent:#1f4e8c;--ok:#1e7a46;--bad:#b3261e}
-  @media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#1f1f1e;--ink:#eeeeea;--mute:#9a9a94;--line:#34342f;--accent:#6aa3e8;--ok:#5cc98a;--bad:#f2766d}}
+  /* Light "code editor" palette: paper surfaces, muted ink, one accent. */
+  :root{
+    --bg:#f3f3f3;         /* editor chrome */
+    --surface:#ffffff;    /* editor body */
+    --surface-2:#f8f8f8;  /* side bar */
+    --line:#e1e1e1;
+    --line-strong:#cfcfcf;
+    --ink:#1f1f1f;        /* foreground */
+    --ink-mute:#616161;   /* muted text */
+    --ink-faint:#9a9a9a;  /* placeholders, meta */
+    --accent:#0b5fff;     /* VS Code blue, used sparingly */
+    --accent-soft:#e5efff;
+    --ok:#1a7f37;
+    --warn:#9a6700;
+    --bad:#b3261e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", monospace;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;padding:24px 16px}
-  main{max-width:640px;margin:0 auto}
-  h1{font-size:22px;margin:0 0 4px}
-  p.sub{color:var(--mute);margin:0 0 20px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
-  #drop{border:2px dashed var(--line);border-radius:12px;padding:40px 16px;text-align:center;cursor:pointer;transition:.15s}
-  #drop.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
-  #drop strong{display:block;font-size:18px}
-  #drop span{color:var(--mute);font-size:14px}
-  .hidden{display:none}
-  .bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin:14px 0 6px}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--font)}
+  main{max-width:960px;margin:0 auto;padding:16px}
+  h1{font-size:18px;font-weight:600;margin:0 0 4px}
+  p.sub{color:var(--ink-mute);margin:0 0 16px;font-size:13px}
+
+  /* Window chrome */
+  .window{background:var(--surface);border:1px solid var(--line-strong);border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+
+  /* Tab strip */
+  .tabs{display:flex;background:var(--bg);border-bottom:1px solid var(--line-strong);overflow-x:auto}
+  .tab{display:flex;align-items:center;gap:8px;padding:8px 14px;font:13px var(--font);color:var(--ink-mute);background:transparent;border:0;border-right:1px solid var(--line);cursor:pointer;white-space:nowrap}
+  .tab:hover{background:var(--surface-2);color:var(--ink)}
+  .tab.active{background:var(--surface);color:var(--ink);border-bottom:2px solid var(--accent);margin-bottom:-1px;padding-bottom:7px}
+  .tab .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .tab .dot.ok{background:var(--ok)} .tab .dot.beta{background:var(--warn)} .tab .dot.off{background:var(--ink-faint)}
+
+  /* Status bar */
+  .status{display:flex;align-items:center;gap:10px;padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-mute)}
+  .status .pill{font:11px var(--mono);padding:1px 6px;border-radius:3px;background:#fff;border:1px solid var(--line-strong)}
+  .status .pill.ok{color:var(--ok);border-color:#c7e6cd}
+  .status .pill.beta{color:var(--warn);border-color:#e9dba1}
+  .status .pill.off{color:var(--ink-faint)}
+
+  /* Panel body */
+  .panel{padding:16px;display:none}
+  .panel.active{display:block}
+
+  .meta{font-size:12px;color:var(--ink-mute);margin-bottom:12px}
+  .meta code{font-family:var(--mono);background:var(--surface-2);padding:1px 5px;border-radius:3px;border:1px solid var(--line)}
+  .meta .notes{display:block;margin-top:4px;color:var(--ink-faint);font-style:italic}
+
+  /* Columns section */
+  .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;font-size:12px}
+  .cols .k{color:var(--ink-mute)}
+  .cols .v{font-family:var(--mono);color:var(--ink)}
+
+  /* Section headings inside a panel */
+  .section-h{font:600 12px var(--mono);color:var(--ink-mute);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+  .section-h:first-child{margin-top:0}
+
+  /* Drop zone */
+  .drop{border:1.5px dashed var(--line-strong);border-radius:4px;padding:28px 16px;text-align:center;cursor:pointer;background:var(--surface-2);transition:border-color .15s,background .15s}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+  .drop strong{display:block;font-size:14px;margin-bottom:2px}
+  .drop span{color:var(--ink-mute);font-size:12px}
+  .hidden{display:none !important}
+
+  /* Test row */
+  .test-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center}
+  .test-row.no-pw{grid-template-columns:2fr auto}
+  input[type=text], input[type=password]{width:100%;padding:7px 10px;border:1px solid var(--line-strong);border-radius:4px;font:13px var(--mono);background:var(--surface)}
+  input[type=text]:focus, input[type=password]:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+
+  button, a.btn{display:inline-block;background:var(--accent);color:#fff;border:0;border-radius:4px;padding:7px 14px;font:13px/1 var(--font);font-weight:500;cursor:pointer;text-decoration:none}
+  button:hover{filter:brightness(.95)}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line-strong)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+
+  /* Progress */
+  .prog{margin-top:16px}
+  .fname{font-family:var(--mono);font-size:12px;color:var(--ink-mute);margin-bottom:6px}
+  .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:6px}
   .bar>div{height:100%;width:0;background:var(--accent);transition:width .3s}
-  #msg{color:var(--mute);font-size:14px}
-  #log{margin-top:14px;max-height:260px;overflow:auto;font:13px/1.6 ui-monospace,Consolas,monospace;border-top:1px solid var(--line);padding-top:10px}
-  #log .ok{color:var(--ok)} #log .bad{color:var(--bad)}
-  button,a.btn{display:inline-block;margin-top:14px;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
-  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);margin-left:8px}
-  .note{color:var(--mute);font-size:13px;margin-top:16px}
-  .err{color:var(--bad);font-weight:600}
+  .msg{font-size:13px;color:var(--ink-mute)}
+  .msg.err{color:var(--bad)}
+
+  /* Log */
+  .log{margin-top:10px;max-height:260px;overflow:auto;font:12px/1.55 var(--mono);background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+  .log .ok{color:var(--ok)} .log .bad{color:var(--bad)}
+  .log div{padding:1px 0}
+
+  .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+
+  /* Test result inline */
+  .test-result{margin-top:10px;font-size:12px}
+  .test-result.err{color:var(--bad)}
+  .test-result.ok{color:var(--ok)}
 </style>
 </head>
 <body>
 <main>
-  <h1>AGL Report Fetcher</h1>
-  <p class="sub">Drop your stock Excel file. You'll get one ZIP with a folder per stock ID containing its report image.</p>
+  <h1>Certificate Fetcher</h1>
+  <p class="sub">Pick a lab, upload a stock sheet, get a ZIP with one folder per stock ID.</p>
 
-  <div class="card">
-    <div id="drop" tabindex="0">
-      <strong>Drag the Excel file here</strong>
-      <span>or click to choose a file (.xlsx)</span>
-      <input id="file" type="file" accept=".xlsx,.xlsm" class="hidden">
+  <div class="window">
+    <!-- Tabs -->
+    <div class="tabs" role="tablist">
+      {% for lab in labs %}
+      <button class="tab {% if loop.first %}active{% endif %}" role="tab" data-lab="{{ lab.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}">
+        <span class="dot {% if lab.tested %}ok{% elif 'not' in lab.notes.lower() or 'unavailable' in lab.notes.lower() %}off{% else %}beta{% endif %}"></span>
+        {{ lab.display_name }}
+      </button>
+      {% endfor %}
     </div>
 
-    <div id="prog" class="hidden">
-      <div id="fname" style="font-weight:600"></div>
-      <div class="bar"><div id="fill"></div></div>
-      <div id="msg">Starting…</div>
-      <div id="log"></div>
-      <div id="actions" class="hidden">
-        <a id="dl" class="btn" href="#">Download ZIP</a>
-        <button class="ghost" id="again">Process another file</button>
+    <!-- Status bar with the selected lab's state -->
+    <div class="status">
+      <span id="status-lab">{{ labs[0].display_name }}</span>
+      <span id="status-pill" class="pill {% if labs[0].tested %}ok{% elif 'not' in labs[0].notes.lower() %}off{% else %}beta{% endif %}">
+        {% if labs[0].tested %}verified{% elif 'not' in labs[0].notes.lower() %}unavailable{% else %}beta — test first{% endif %}
+      </span>
+      <span style="flex:1"></span>
+      <span>Stock ID column: <code style="font-family:var(--mono)">{{ stock_col }}</code></span>
+      <span style="margin-left:10px">Concurrency: <code style="font-family:var(--mono)">{{ concurrency }}</code></span>
+    </div>
+
+    <!-- One panel per lab -->
+    {% for lab in labs %}
+    <div class="panel {% if loop.first %}active{% endif %}" data-panel="{{ lab.key }}">
+      <div class="meta">
+        {{ lab.blurb }}
+        {% if lab.notes %}<span class="notes">{{ lab.notes }}</span>{% endif %}
+      </div>
+
+      <div class="cols">
+        <div><span class="k">Stock ID:</span> <span class="v">col {{ stock_col }}</span></div>
+        <div><span class="k">Certificate #:</span> <span class="v">col {{ lab.cert_col }}</span></div>
+        <div><span class="k">Password:</span> <span class="v">{% if lab.needs_password %}col {{ lab.password_col }}{% else %}not required{% endif %}</span></div>
+      </div>
+
+      <div class="section-h">Test a single report</div>
+      <p class="meta" style="margin-top:-4px">Verify this lab works for one certificate before running a batch. Downloads the file straight to your computer.</p>
+      <form class="test-form {% if not lab.needs_password %}no-pw{% endif %}" data-lab="{{ lab.key }}" data-needs-pw="{{ 'true' if lab.needs_password else 'false' }}">
+        <div class="test-row {% if not lab.needs_password %}no-pw{% endif %}">
+          <input type="text" name="cert" placeholder="Certificate number" autocomplete="off">
+          {% if lab.needs_password %}
+          <input type="text" name="password" placeholder="Password / PIN" autocomplete="off">
+          {% endif %}
+          <button type="submit">Test</button>
+        </div>
+        <div class="test-result" aria-live="polite"></div>
+      </form>
+
+      <div class="section-h">Batch upload</div>
+      <div class="drop" tabindex="0" data-lab="{{ lab.key }}">
+        <strong>Drag an Excel file here</strong>
+        <span>or click to choose a file (.xlsx)</span>
+        <input type="file" accept=".xlsx,.xlsm" class="hidden">
+      </div>
+
+      <div class="prog hidden">
+        <div class="fname"></div>
+        <div class="bar"><div class="fill"></div></div>
+        <div class="msg">Starting…</div>
+        <div class="log hidden"></div>
+        <div class="actions hidden">
+          <a class="btn dl" href="#">Download ZIP</a>
+          <a class="btn ghost dl-partial hidden" href="#">Download partial (whatever finished)</a>
+          <button class="ghost again" type="button">Process another file</button>
+        </div>
       </div>
     </div>
+    {% endfor %}
   </div>
 
-  <p class="note">Rows with a missing report number or password, or that AGL rejects, are listed in <b>needs_manual_check.csv</b> inside the ZIP. Results are deleted from the server after about an hour.</p>
+  <p class="sub" style="margin-top:16px">Rows with a missing certificate number, a missing password (if required), or a lab-side rejection are listed in <code style="font-family:var(--mono)">needs_manual_check.csv</code> inside the ZIP. Results are deleted from the server after about an hour.</p>
 </main>
 
 <script>
-const $=id=>document.getElementById(id);
-const drop=$('drop'), input=$('file');
-drop.onclick=()=>input.click();
-drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' ')input.click()};
-['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
-['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
-drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])start(e.dataTransfer.files[0])});
-input.onchange=()=>{if(input.files[0])start(input.files[0])};
-$('again').onclick=()=>location.reload();
+const labMeta = {
+  {% for lab in labs %}
+  "{{ lab.key }}": {name: "{{ lab.display_name }}", tested: {{ 'true' if lab.tested else 'false' }}, notes: "{{ lab.notes|replace('"','\\"') }}"},
+  {% endfor %}
+};
 
-async function start(file){
-  drop.classList.add('hidden'); $('prog').classList.remove('hidden');
-  $('fname').textContent=file.name; $('msg').textContent='Uploading…';
-  const fd=new FormData(); fd.append('file',file);
-  let r=await fetch('upload',{method:'POST',body:fd}), j=await r.json();
-  if(!r.ok){fail(j.error||'Upload failed');return}
-  poll(j.job);
+// Tab switching
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    const key = t.dataset.lab;
+    document.querySelectorAll('.tab').forEach(x => {x.classList.remove('active'); x.setAttribute('aria-selected','false')});
+    t.classList.add('active'); t.setAttribute('aria-selected','true');
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === key));
+    const meta = labMeta[key];
+    document.getElementById('status-lab').textContent = meta.name;
+    const pill = document.getElementById('status-pill');
+    pill.classList.remove('ok','beta','off');
+    if (meta.tested) {pill.classList.add('ok'); pill.textContent = 'verified'}
+    else if (meta.notes.toLowerCase().includes('not')) {pill.classList.add('off'); pill.textContent = 'unavailable'}
+    else {pill.classList.add('beta'); pill.textContent = 'beta — test first'}
+  });
+});
+
+// Per-panel drop zones
+document.querySelectorAll('.drop').forEach(drop => {
+  const panel = drop.closest('.panel');
+  const input = drop.querySelector('input[type=file]');
+  drop.onclick = () => input.click();
+  drop.onkeydown = e => {if (e.key === 'Enter' || e.key === ' ') input.click()};
+  ['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => {e.preventDefault(); drop.classList.add('over')}));
+  ['dragleave','drop'].forEach(t => drop.addEventListener(t, e => {e.preventDefault(); drop.classList.remove('over')}));
+  drop.addEventListener('drop', e => {if (e.dataTransfer.files[0]) startBatch(panel, drop.dataset.lab, e.dataTransfer.files[0])});
+  input.onchange = () => {if (input.files[0]) startBatch(panel, drop.dataset.lab, input.files[0])};
+});
+
+// Single-cert test
+document.querySelectorAll('.test-form').forEach(form => {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const out = form.querySelector('.test-result');
+    out.className = 'test-result'; out.textContent = 'Fetching…';
+    const fd = new FormData(form);
+    fd.append('lab', form.dataset.lab);
+    try {
+      const r = await fetch('test', {method:'POST', body: fd});
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
+        out.className = 'test-result err'; out.textContent = '✗ ' + (j.error || 'failed');
+        return;
+      }
+      // Trigger download of the blob
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="?([^";]+)/);
+      const name = m ? m[1] : 'certificate';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+      URL.revokeObjectURL(url);
+      out.className = 'test-result ok'; out.textContent = '✓ Downloaded ' + name;
+    } catch (err) {
+      out.className = 'test-result err'; out.textContent = '✗ ' + err.message;
+    }
+  });
+});
+
+async function startBatch(panel, lab, file) {
+  const drop = panel.querySelector('.drop');
+  const prog = panel.querySelector('.prog');
+  const fname = panel.querySelector('.fname');
+  const msg = panel.querySelector('.msg');
+  const log = panel.querySelector('.log');
+  const fill = panel.querySelector('.fill');
+  const actions = panel.querySelector('.actions');
+  const dl = panel.querySelector('.dl');
+  const dlPartial = panel.querySelector('.dl-partial');
+  const again = panel.querySelector('.again');
+
+  drop.classList.add('hidden'); prog.classList.remove('hidden');
+  fname.textContent = file.name; msg.textContent = 'Uploading…'; msg.className = 'msg';
+  log.classList.remove('hidden');
+
+  again.onclick = () => location.reload();
+
+  const fd = new FormData(); fd.append('file', file); fd.append('lab', lab);
+  let r, j;
+  try {
+    r = await fetch('upload', {method:'POST', body: fd});
+    j = await r.json();
+  } catch (e) {
+    msg.className = 'msg err'; msg.textContent = 'Upload failed: ' + e.message;
+    actions.classList.remove('hidden'); dl.classList.add('hidden'); return;
+  }
+  if (!r.ok) {
+    msg.className = 'msg err'; msg.textContent = j.error || 'Upload failed';
+    actions.classList.remove('hidden'); dl.classList.add('hidden'); return;
+  }
+  poll(j.job, {msg, log, fill, actions, dl, dlPartial});
 }
-function fail(t){$('msg').innerHTML='<span class="err">'+t+'</span>';$('actions').classList.remove('hidden');$('dl').classList.add('hidden')}
-async function poll(job){
-  const s=await (await fetch('status/'+job)).json();
-  const pct=s.total?Math.round(100*s.done/s.total):0;
-  $('fill').style.width=pct+'%';
-  const L=$('log'); L.innerHTML=s.log.map(x=>'<div class="'+(x[0]==='✓'?'ok':'bad')+'"></div>').join('');
-  [...L.children].forEach((d,i)=>d.textContent=s.log[i]); L.scrollTop=L.scrollHeight;
-  if(s.state==='error'){fail('Error: '+s.error);return}
-  if(s.state==='waiting'){$('msg').textContent='Another batch is running – yours will start next…'}
-  else if(s.state==='finished'){
-    $('fill').style.width='100%';
-    $('msg').textContent='Done: '+s.ok+' saved'+(s.problems?', '+s.problems+' need a manual check':'')+'.';
-    $('dl').href='download/'+job; $('actions').classList.remove('hidden'); return;
-  } else $('msg').textContent='Fetching '+s.done+' of '+s.total+'…';
-  setTimeout(()=>poll(job),1500);
+
+async function poll(job, ui) {
+  let s;
+  try {
+    const r = await fetch('status/' + job);
+    s = await r.json();
+  } catch (e) {
+    // Network glitch while polling -- keep trying, the batch is server-side.
+    ui.msg.textContent = 'Lost connection, retrying… (batch still running on server)';
+    setTimeout(() => poll(job, ui), 3000);
+    return;
+  }
+  const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+  ui.fill.style.width = pct + '%';
+
+  ui.log.innerHTML = '';
+  s.log.forEach(line => {
+    const d = document.createElement('div');
+    d.className = line[0] === '✓' ? 'ok' : 'bad';
+    d.textContent = line;
+    ui.log.appendChild(d);
+  });
+  ui.log.scrollTop = ui.log.scrollHeight;
+
+  // Expose the partial-download link as soon as it's available.
+  if (s.partial_ready) {
+    ui.dlPartial.href = 'download-partial/' + job;
+    ui.dlPartial.classList.remove('hidden');
+    ui.actions.classList.remove('hidden');
+  }
+
+  if (s.state === 'error') {
+    ui.msg.className = 'msg err';
+    ui.msg.textContent = 'Error: ' + s.error + (s.partial_ready ? ' — partial download available below.' : '');
+    ui.actions.classList.remove('hidden');
+    if (!s.partial_ready) ui.dl.classList.add('hidden');
+    return;
+  }
+  if (s.state === 'finished') {
+    ui.fill.style.width = '100%';
+    ui.msg.textContent = 'Done: ' + s.ok + ' saved' + (s.problems ? ', ' + s.problems + ' need a manual check' : '') + '.';
+    ui.dl.href = 'download/' + job;
+    ui.dlPartial.classList.add('hidden'); // full download supersedes partial
+    ui.actions.classList.remove('hidden');
+    return;
+  }
+  // Running. Show heartbeat-aware status.
+  const heartbeatAge = s.heartbeat ? (Date.now()/1000 - s.heartbeat) : 0;
+  if (heartbeatAge > 45 && s.done > 0 && s.done < s.total) {
+    ui.msg.className = 'msg err';
+    ui.msg.textContent = 'No progress for ' + Math.round(heartbeatAge) + 's — batch may be stalled. Use "Download partial" to grab what finished.';
+  } else {
+    ui.msg.className = 'msg';
+    ui.msg.textContent = 'Fetching ' + s.done + ' of ' + s.total + ' (' + s.ok + ' saved, ' + s.problems + ' failed)…';
+  }
+  setTimeout(() => poll(job, ui), 1500);
 }
 </script>
 </body>
